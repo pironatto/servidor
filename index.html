@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Socket.IO Teste</title>
+  <script src="node_modules/socket.io/client-dist/socket.io.js"></script>
+</head>
+<body>
+  <h1>Cliente Socket.IO</h1>
+  <div id="mensagens"></div>
+
+  <script>
+    const socket = io("http://localhost:3000");
+    
+
+    socket.on("status", (data) => {
+      document.getElementById("mensagens").innerHTML += "<p>" + data.msg + "</p>";
+    });
+
+    socket.on("dados", (data) => {
+      document.getElementById("mensagens").innerHTML += "<pre>" + JSON.stringify(data, null, 2) + "</pre>";
+    });
+  </script>
+</body>
+</html>
