@@ -75,17 +75,13 @@ function criarPartida(jogadores, materia) {
   const partida = {
     parceiros: jogadores,
     materia,
+    partidaIndividual: jogadores.length === 1,
     perguntasUsadas: new Set(),
 
     perguntaAtual: null,
     numeroPergunta: 0,
-
-    // ws -> resposta recebida
     respostasRecebidas: new Map(),
-
     aguardandoInicio: new Set(jogadores),
-
-    // ws -> pontuação acumulada
     pontuacoes: new Map(),
 
     timer: null,
@@ -106,7 +102,8 @@ function criarPartida(jogadores, materia) {
   console.log(
     `Partida criada: ${partidaId} | ` +
     `matéria: ${materia} | ` +
-    `jogadores: ${jogadores.length}`
+    `jogadores: ${jogadores.length} | ` +
+    `individual: ${partida.partidaIndividual}`
   );
 
   return partidaId;
@@ -156,10 +153,16 @@ function removerJogador(ws) {
   partidasPorUsuario.delete(ws);
 
   if (partida.parceiros.length > 0) {
-    enviarParaJogadores(partida, {
+    const jogadorRestante = partida.parceiros[0];
+
+    enviarJson(jogadorRestante, {
       tipo: "fim",
       partidaId,
-      motivo: "adversarioDesconectado"
+      motivo: "adversarioDesconectado",
+      partidaIndividual: false,
+      pontuacaoJogador:
+        Number(partida.pontuacoes.get(jogadorRestante)) || 0,
+      pontuacaoOponente: 0
     });
   }
 
@@ -267,7 +270,6 @@ async function enviarPergunta(partidaId) {
     partida.numeroPergunta += 1;
     partida.respostasRecebidas.clear();
 
-    // A resposta correta fica somente no servidor.
     partida.perguntaAtual = {
       id: row.id,
       correta: String(row.correta).trim().toUpperCase(),
@@ -277,8 +279,6 @@ async function enviarPergunta(partidaId) {
     const payload = {
       tipo: "itens",
       partidaId,
-
-      // A resposta correta NÃO é enviada ao cliente.
       itens: [
         String(row.id),
         row.materia,
@@ -288,14 +288,12 @@ async function enviarPergunta(partidaId) {
         row.r3,
         row.r4
       ],
-
       tempoTotal: TEMPO_PERGUNTA_MS / 1000,
       inicio: partida.perguntaAtual.inicio
     };
 
     console.log(
-      `Enviando pergunta ${partida.numeroPergunta}/` +
-      `${TOTAL_PERGUNTAS}: ${partidaId}`
+      `Enviando pergunta ${partida.numeroPergunta}/${TOTAL_PERGUNTAS}: ${partidaId}`
     );
 
     enviarParaJogadores(partida, payload);
@@ -342,9 +340,7 @@ function processarResposta(ws, partida, resposta) {
     respostaNormalizada !== "" &&
     respostaNormalizada === partida.perguntaAtual.correta;
 
-  const pontos = acertou
-    ? calcularPontos(partida)
-    : 0;
+  const pontos = acertou ? calcularPontos(partida) : 0;
 
   const pontuacaoAnterior =
     Number(partida.pontuacoes.get(ws)) || 0;
@@ -352,19 +348,14 @@ function processarResposta(ws, partida, resposta) {
   const pontuacaoAtual =
     pontuacaoAnterior + pontos;
 
-  partida.respostasRecebidas.set(
-    ws,
-    respostaNormalizada
-  );
+  const partidaId = encontrarPartidaId(partida);
 
-  partida.pontuacoes.set(
-    ws,
-    pontuacaoAtual
-  );
+  partida.respostasRecebidas.set(ws, respostaNormalizada);
+  partida.pontuacoes.set(ws, pontuacaoAtual);
 
   enviarJson(ws, {
     tipo: "resultadoResposta",
-    partidaId: encontrarPartidaId(partida),
+    partidaId,
     resposta: respostaNormalizada,
     correta: partida.perguntaAtual.correta,
     acertou,
@@ -379,7 +370,7 @@ function processarResposta(ws, partida, resposta) {
   if (adversario) {
     enviarJson(adversario, {
       tipo: "pontuacaoOponente",
-      partidaId: encontrarPartidaId(partida),
+      partidaId,
       pontos: pontuacaoAtual
     });
   }
@@ -387,6 +378,61 @@ function processarResposta(ws, partida, resposta) {
   console.log(
     `Resposta validada: ${respostaNormalizada || "SEM RESPOSTA"} | ` +
     `acertou: ${acertou} | pontos: ${pontos.toFixed(1)}`
+  );
+}
+
+function enviarResumoDasRespostas(partidaId, partida) {
+  if (
+    !partida ||
+    partida.partidaIndividual ||
+    partida.parceiros.length < 2 ||
+    !partida.perguntaAtual
+  ) {
+    return;
+  }
+
+  const jogadorA = partida.parceiros[0];
+  const jogadorB = partida.parceiros[1];
+
+  const respostaA =
+    partida.respostasRecebidas.get(jogadorA) || "";
+
+  const respostaB =
+    partida.respostasRecebidas.get(jogadorB) || "";
+
+  const respostaCorreta =
+    partida.perguntaAtual.correta;
+
+  const acertouA =
+    respostaA !== "" &&
+    respostaA === respostaCorreta;
+
+  const acertouB =
+    respostaB !== "" &&
+    respostaB === respostaCorreta;
+
+  enviarJson(jogadorA, {
+    tipo: "resumoRespostas",
+    partidaId,
+    respostaJogador: respostaA,
+    respostaOponente: respostaB,
+    acertouJogador: acertouA,
+    acertouOponente: acertouB
+  });
+
+  enviarJson(jogadorB, {
+    tipo: "resumoRespostas",
+    partidaId,
+    respostaJogador: respostaB,
+    respostaOponente: respostaA,
+    acertouJogador: acertouB,
+    acertouOponente: acertouA
+  });
+
+  console.log(
+    `Respostas reveladas: ${partidaId} | ` +
+    `Jogador A: ${respostaA || "SEM RESPOSTA"} | ` +
+    `Jogador B: ${respostaB || "SEM RESPOSTA"}`
   );
 }
 
@@ -424,6 +470,12 @@ async function verificarRespostasDaPartida(partidaId) {
   }
 
   partida.processandoRespostas = true;
+
+  enviarResumoDasRespostas(
+    partidaId,
+    partida
+  );
+
   partida.perguntaAtual = null;
 
   limparTimer(partida);
@@ -450,10 +502,7 @@ async function verificarRespostasDaPartida(partidaId) {
 function registrarInicioDaPartida(ws, partidaId) {
   const partida = paresAtivos.get(partidaId);
 
-  if (
-    !partida ||
-    !partida.parceiros.includes(ws)
-  ) {
+  if (!partida || !partida.parceiros.includes(ws)) {
     return;
   }
 
@@ -501,12 +550,7 @@ function registrarResposta(ws, data) {
     return;
   }
 
-  processarResposta(
-    ws,
-    partida,
-    data.resposta
-  );
-
+  processarResposta(ws, partida, data.resposta);
   verificarRespostasDaPartida(data.partidaId);
 }
 
@@ -520,7 +564,10 @@ async function finalizarPartida(partidaId) {
   partida.encerrando = true;
   limparTimer(partida);
 
-  console.log(`Finalizando partida: ${partidaId}`);
+  console.log(
+    `Finalizando partida: ${partidaId} | ` +
+    `individual: ${partida.partidaIndividual}`
+  );
 
   partida.parceiros.forEach((usuario) => {
     const adversario = partida.parceiros.find(
@@ -530,6 +577,12 @@ async function finalizarPartida(partidaId) {
     enviarJson(usuario, {
       tipo: "fim",
       partidaId,
+
+      motivo: partida.partidaIndividual
+        ? "partidaIndividual"
+        : "partidaFinalizada",
+
+      partidaIndividual: partida.partidaIndividual,
 
       pontuacaoJogador:
         Number(partida.pontuacoes.get(usuario)) || 0,
@@ -559,16 +612,14 @@ function tentarCriarPartidaMultiplayer(materia) {
   }
 
   const jogadores = fila.slice(0, 2);
-  const partidaId = criarPartida(
-    jogadores,
-    materia
-  );
+  const partidaId = criarPartida(jogadores, materia);
 
   jogadores.forEach((ws) => {
     enviarJson(ws, {
       tipo: "parFormado",
       partidaId,
-      materia
+      materia,
+      tempoAbertura: 5
     });
   });
 
@@ -593,10 +644,7 @@ function agendarPartidaSingle(ws, materia) {
       return;
     }
 
-    const partidaId = criarPartida(
-      [ws],
-      materia
-    );
+    const partidaId = criarPartida([ws], materia);
 
     enviarJson(ws, {
       tipo: "status",
@@ -623,15 +671,10 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("message", (message) => {
-    console.log(
-      "Mensagem recebida:",
-      message.toString()
-    );
+    console.log("Mensagem recebida:", message.toString());
 
     try {
-      const data = JSON.parse(
-        message.toString()
-      );
+      const data = JSON.parse(message.toString());
 
       if (data.tipo === "reset") {
         removerJogador(ws);
@@ -665,12 +708,10 @@ wss.on("connection", (ws) => {
         enviarJson(ws, {
           tipo: "status",
           mensagem:
-            `Você escolheu ${materia}, ` +
-            "aguardando outro usuário..."
+            `Você escolheu ${materia}, aguardando outro usuário...`
         });
 
-        const partidaCriada =
-          tentarCriarPartidaMultiplayer(materia);
+        const partidaCriada = tentarCriarPartidaMultiplayer(materia);
 
         if (!partidaCriada) {
           agendarPartidaSingle(ws, materia);
@@ -679,35 +720,19 @@ wss.on("connection", (ws) => {
         return;
       }
 
-      if (
-        data.tipo === "novaPergunta" &&
-        data.partidaId
-      ) {
-        registrarInicioDaPartida(
-          ws,
-          data.partidaId
-        );
-
+      if (data.tipo === "novaPergunta" && data.partidaId) {
+        registrarInicioDaPartida(ws, data.partidaId);
         return;
       }
 
-      if (
-        data.tipo === "resposta" &&
-        data.partidaId
-      ) {
+      if (data.tipo === "resposta" && data.partidaId) {
         registrarResposta(ws, data);
         return;
       }
 
-      console.warn(
-        "Mensagem não reconhecida:",
-        data
-      );
+      console.warn("Mensagem não reconhecida:", data);
     } catch (erro) {
-      console.error(
-        "Erro ao processar mensagem:",
-        erro
-      );
+      console.error("Erro ao processar mensagem:", erro);
     }
   });
 
@@ -717,13 +742,8 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("error", (erro) => {
-    console.error(
-      "Erro no WebSocket:",
-      erro
-    );
+    console.error("Erro no WebSocket:", erro);
   });
 });
 
-console.log(
-  `Servidor WebSocket rodando na porta ${PORT}`
-);
+console.log(`Servidor WebSocket rodando na porta ${PORT}`);
