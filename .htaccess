@@ -1,0 +1,27 @@
+RewriteEngine On
+Options -Indexes
+RewriteBase /
+
+# 🚨 Bloqueia arquivos sensíveis
+RewriteRule ^\.git/ - [F,L]
+RewriteRule ^\.env - [F,L]
+RewriteRule \.sql$ - [F,L]
+RewriteRule \.bak$ - [F,L]
+RewriteRule \.log$ - [F,L]
+RewriteRule ^backup - [F,L]
+
+# 🚨 Bloqueia acesso direto ao conexao.php
+RewriteRule ^core/pages/corujao/conexao\.php$ - [F,L]
+
+# 🆕 Serve avatares: mapeia /corujao/avatars/X → core/pages/corujao/avatars/X
+RewriteRule ^corujao/avatars/(.+)$ core/pages/corujao/avatars/$1 [L]
+
+# Rota amigável para qualquer script em core/pages/corujao
+RewriteRule ^corujao/([a-zA-Z0-9_-]+)/?$ core/pages/corujao/$1.php [L,QSA]
+
+# Se não for arquivo nem diretório, redireciona para public/index.php
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ public/index.php?pag=$1 [L,QSA]
+
+RewriteRule ^$ public/index.php [L,QSA]
